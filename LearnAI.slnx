@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/01-ChatAppAi/">
+    <Project Path="ChatAppAI/ChatAppAI.csproj" Id="3937dab4-b9fc-4310-a07a-f206954ae973" />
+  </Folder>
+  <Folder Name="/02-StructuredOutput/">
+    <Project Path="StructuredOutput/StructuredOutput.csproj" Id="ef75cb7f-ac60-4d0c-9764-d84962d9c95a" />
+  </Folder>
+  <Folder Name="/03-VectorDataAI/">
+    <Project Path="VectorDataAI/VectorDataAI.csproj" Id="260bd31c-039b-4c22-b9b2-543e1e334cd0" />
+  </Folder>
+  <Folder Name="/04-FunctionCallingAI/">
+    <Project Path="FunctionCallingAI/FunctionCallingAI.csproj" Id="55bdb907-9e86-4e52-bf17-a5c0c1efa171" />
+  </Folder>
+</Solution>
