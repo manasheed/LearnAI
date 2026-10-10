@@ -1,23 +1,4 @@
-﻿/*
-Open a terminal window and verify that Ollama is available on your device:
-
-ollama
-If Ollama is available, it displays a list of available commands.
-
-Start Ollama:
-ollama serve
-If Ollama is running, it displays a list of available commands.
-
-Pull the phi3:mini model from the Ollama registry and wait for it to download:
-
-ollama pull phi3:mini
-After the download completes, run the model:
-
-ollama run phi3:mini
-Ollama starts the phi3:mini model and provides a prompt for you to interact with it.  
-*/
-
-using Microsoft.Extensions.AI;
+﻿using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Configuration;
 using OpenAI;
 

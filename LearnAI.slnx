@@ -11,4 +11,10 @@
   <Folder Name="/04-FunctionCallingAI/">
     <Project Path="FunctionCallingAI/FunctionCallingAI.csproj" Id="55bdb907-9e86-4e52-bf17-a5c0c1efa171" />
   </Folder>
+  <Folder Name="/05-LocalAI/">
+    <Project Path="LocalAI/LocalAI.csproj" Id="c871c470-23bb-49ad-86de-20cc97475a1a" />
+  </Folder>
+  <Folder Name="/06-AIAssistant/">
+    <Project Path="AIAssistant/AIAssistant.csproj" Id="4c0cd333-ccac-4099-815a-0d9301a0a8f5" />
+  </Folder>
 </Solution>
