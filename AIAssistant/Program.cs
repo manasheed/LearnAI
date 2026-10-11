@@ -30,8 +30,9 @@ Run steps:	A detailed list of steps the assistant took as part of a run.
 */
 
 using OpenAI;
-using OpenAI.Assistants;
+using OpenAI.Responses;
 using OpenAI.Files;
+using OpenAI.Containers;
 using Azure.AI.OpenAI;
 using Azure.Identity;
 using Microsoft.Identity.Client;
@@ -53,8 +54,9 @@ OpenAIClient openAIClient = new(apiKey);
 //    new DefaultAzureCredential());
 
 #pragma warning disable OPENAI001
-AssistantClient assistantClient = openAIClient.GetAssistantClient();
+ResponsesClient responsesClient = openAIClient.GetResponsesClient();
 OpenAIFileClient fileClient = openAIClient.GetOpenAIFileClient();
+ContainerClient containerClient = openAIClient.GetContainerClient();
 
 // Create an in-memory document to upload to the file client
 using Stream document = BinaryData.FromBytes("""
@@ -93,111 +95,93 @@ OpenAIFile salesFile = fileClient.UploadFile(
     FileUploadPurpose.Assistants);
 
 
-// Enable file search and code interpreter tooling capabilities via the AssistantCreateOptions.
+// Enable code interpreter tooling capability via the CreateResponseOptions,
+// attaching the uploaded sales file directly to the tool's container.
 
-// Configure the assistant options
-AssistantCreationOptions assistantOptions = new()
+// Configure the response options
+CreateResponseOptions responseOptions = new(
+    model,
+    [
+        ResponseItem.CreateUserMessageItem(
+            "Read the uploaded monthly_sales.json file. Use the actual sales data " +
+            "to create a graph of monthly units sold for each product. " +
+            "You must use the Code Interpreter tool to execute Python code, " +
+            "generate a real chart image, and return that image as an output file. " +
+            "Do not describe how to create a graph; create it.")
+    ])
 {
-    Name = "Example: Contoso Sales RAG",
     Instructions = "You are an assistant that looks up sales data and helps visualize the information based"
         + " on user queries. When asked to generate a graph, chart, or other visualization, use"
         + " the code interpreter tool to do so.",
-    Tools =
-
-    {
-        new FileSearchToolDefinition(), // Enable the assistant to search and access files
-        new CodeInterpreterToolDefinition() // Enables the assistant to run code for data analysis
-    },
-    ToolResources = new()
-    {
-        FileSearch = new()
-        {
-            NewVectorStores =
-            {
-                new VectorStoreCreationHelper([salesFile.Id]),
-            }
-        }
-    },
+    BackgroundModeEnabled = true, // Run the response asynchronously so we can poll for completion, mirroring the original run-polling flow.
 };
+responseOptions.Tools.Add(
+    ResponseTool.CreateCodeInterpreterTool(
+        CodeInterpreterToolContainerConfiguration.CreateAutomaticContainerConfiguration([salesFile.Id])));
 
-// Create the Assistent and a thread to manage interactions between the user and assistant.
-Assistant assistant = assistantClient.CreateAssistant(model, assistantOptions);
+// Create the response. With background mode enabled, the result starts out in a
+// non-terminal status and must be polled, mirroring the original thread-run flow.
+ResponseResult response = (await responsesClient.CreateResponseAsync(responseOptions)).Value;
 
-// Configure and create conversation thread.
-ThreadCreationOptions threadOptions = new()
+// Send the prompt and monitor progress until the response is complete.
+while (response.Status is ResponseStatus.Queued or ResponseStatus.InProgress)
 {
-    //InitialMessages = { "How well did product 113045 sell in February? Graph its trend over time." }
-    InitialMessages =
-    {
-        "Read the uploaded monthly_sales.json file. Use the actual sales data " +
-        "to create a graph of monthly units sold for each product. " +
-        "You must use the Code Interpreter tool to execute Python code, " +
-        "generate a real chart image, and return that image as an output file. " +
-        "Do not describe how to create a graph; create it."
-    }
-};
-
-ThreadRun threadRun = assistantClient.CreateThreadAndRun(assistant.Id, threadOptions);
-
-// Sent the prompt to the monitor pgress until the tread run is complete.
-do {
     Thread.Sleep(TimeSpan.FromSeconds(1));
-    threadRun = assistantClient.GetRun(threadRun.ThreadId, threadRun.Id);
-} while (!threadRun.Status.IsTerminal);
+    response = (await responsesClient.GetResponseAsync(response.Id)).Value;
+}
 
-// check if code interpreter actually run
-Console.WriteLine($"Run status: {threadRun.Status}");
-Console.WriteLine($"Thread ID:  {threadRun.ThreadId}");
-Console.WriteLine($"Run ID:     {threadRun.Id}");
-// Get the message from the thread run
-var messages = assistantClient.GetMessagesAsync(
-    threadRun.ThreadId,
-    new MessageCollectionOptions()
-    { Order = MessageCollectionOrder.Ascending }
-    );
+// Check if code interpreter actually ran
+Console.WriteLine($"Response status: {response.Status}");
+Console.WriteLine($"Response ID:     {response.Id}");
+
+// Note: to continue this conversation in a follow-up turn, pass
+// previousResponseId: response.Id on the next CreateResponseOptions.
 
 //Print the messages and save the generated image from the conversation with assistant.
 
-// Process the messages from assistant
-await foreach (ThreadMessage message in messages)
+// Process the output items from the response
+foreach (ResponseItem item in response.OutputItems)
 {
+    if (item is not MessageResponseItem message)
+    {
+        continue;
+    }
+
     // Print the message content from the assistant
     Console.WriteLine($"[{message.Role.ToString().ToUpper()}]: ");
-    foreach (MessageContent contentItem in message.Content)
+    foreach (ResponseContentPart contentItem in message.Content)
     {
         if (!string.IsNullOrEmpty(contentItem.Text))
         {
             Console.WriteLine(contentItem.Text);
-            if (contentItem.TextAnnotations.Count > 0)
+            if (contentItem.OutputTextAnnotations.Count > 0)
             {
                 Console.WriteLine();
             }
 
             // Include annotations, if any
-            foreach (TextAnnotation annotation in contentItem.TextAnnotations)
+            foreach (ResponseMessageAnnotation annotation in contentItem.OutputTextAnnotations)
             {
-                if (!string.IsNullOrEmpty(annotation.InputFileId))
+                if (annotation is FileCitationMessageAnnotation fileCitation)
                 {
-                    Console.WriteLine($"* File citation, file ID: {annotation.InputFileId}");
+                    Console.WriteLine($"* File citation, file ID: {fileCitation.FileId}");
                 }
 
-                if (!string.IsNullOrEmpty(annotation.OutputFileId))
+                if (annotation is ContainerFileCitationMessageAnnotation containerFileCitation)
                 {
-                    Console.WriteLine($"* File output, new file ID: {annotation.OutputFileId}");
+                    Console.WriteLine($"* File output, new file ID: {containerFileCitation.FileId}");
+
+                    // Save the generated image file from the code interpreter container
+                    string filename = containerFileCitation.Filename ?? containerFileCitation.FileId;
+                    BinaryData imageBytes = (await containerClient.DownloadContainerFileAsync(
+                        containerFileCitation.ContainerId,
+                        containerFileCitation.FileId)).Value;
+                    using FileStream stream = File.OpenWrite($"{filename}.png");
+                    imageBytes.ToStream().CopyTo(stream);
+                    Console.WriteLine($"<image: {filename}.png");
                 }
             }
         }
-
-        // Save the generated image file
-        if (!string.IsNullOrEmpty(contentItem.ImageFileId))
-        {
-            OpenAIFile imageInfo = fileClient.GetFile(contentItem.ImageFileId);
-            BinaryData imageBytes = fileClient.DownloadFile(contentItem.ImageFileId);
-            using FileStream stream = File.OpenWrite($"{imageInfo.Filename}.png");
-            imageBytes.ToStream().CopyTo(stream);
-            Console.WriteLine($"<image: {imageInfo.Filename}.png");
-        }
     }
     Console.WriteLine();
-
 }
